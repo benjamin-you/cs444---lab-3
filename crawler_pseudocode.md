@@ -3,35 +3,56 @@
 ## High-Level Architecture
 
 ```
-                    ┌─────────────┐
-                    │  Main Thread│
-                    │  (crawl fn) │
-                    └──────┬──────┘
-                           │
-                           │ Initialize
-                           ▼
-              ┌────────────────────────┐
-              │  Shared Data Structures│
-              │  - Links Queue         │
-              │  - Visited Set         │
-              │  - Mutexes/Conds       │
-              └────────┬───────────────┘
-                       │
-           ┌───────────┴───────────┐
-           ▼                       ▼
-    ┌──────────────┐        ┌─────────────┐
-    │  Download    │        │   Parse     │
-    │  Worker Pool │        │  Worker Pool│
-    │  (N threads) │        │  (M threads)│
-    └──────┬───────┘        └──────┬──────┘
-           │                       │
-           │ fetch_fn()            │ extract links
-           │                       │ call edge_fn()
-           ▼                       ▼
-    ┌──────────────┐        ┌─────────────┐
-    │  HTML Content│───────▶│ New Links   │
-    │              │        │  to Queue   │
-    └──────────────┘        └─────────────┘
+                         ┌─────────────┐
+                         │  Main Thread│
+                         │  (crawl fn) │
+                         └──────┬──────┘
+                                │
+                                │ Initialize & seed
+                                ▼
+                   ┌───────────────────────────┐
+                   │  Shared Data Structures   │
+                   │  - Links Queue (BOUNDED)  │
+                   │  - Pages Queue (UNBOUNDED)│
+                   │  - Visited Set            │       
+                   └────────┬──────────────────┘
+                            │
+            ┌───────────────┴────────────────┐
+            ▼                                ▼
+     ┌─────────────┐                  ┌─────────────┐
+     │   PARSERS   │                  │ DOWNLOADERS │
+     │  (PRODUCERS)│                  │ (CONSUMERS) │
+     │  M threads  │                  │  N threads  │
+     └──────┬──────┘                  └──────┬──────┘
+            │                                │
+            │ PRODUCE                        │ CONSUME
+            │ new links                      │ links
+            │                                │
+            ▼                                ▼
+     ┌────────────────────────────────────────────┐
+     │        LINKS QUEUE (BOUNDED)               │
+     │  Parsers PUSH ──────────▶ Downloaders POP  │
+     │        (work_queue_size limit)             │
+     └────────────────────────────────────────────┘
+                                │
+                                │ fetch_fn()
+                                │ PRODUCE pages
+                                ▼
+     ┌────────────────────────────────────────────┐
+     │        PAGES QUEUE (UNBOUNDED)             │
+     │  Downloaders PUSH ──────▶ Parsers POP      │
+     │         (no size limit)                    │
+     └────────────────────────────────────────────┘
+                                │
+                                │ extract links
+                                │ call edge_fn()
+                                └──────┐
+                                       │
+                                       └─── (cycle repeats)
+
+PRODUCER-CONSUMER RELATIONSHIPS:
+1. Links Queue: Parsers produce → Downloaders consume
+2. Pages Queue: Downloaders produce → Parsers consume
 ```
 
 ## Data Structures Needed
