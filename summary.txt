@@ -1,0 +1,87 @@
+Hi there,
+
+I used the below command to run the program. My chat with Claude Code is here: https://claude.ai/share/9f91b377-67c5-497c-8907-3b9d9468e80b
+
+>>>>
+  make clean && make libcrawler.so && make crawl && make run-crawl
+<<<<
+
+The code had this interesting error where the first downloader thread would initialise, get bored, then tell the program to shut everything down. This happened if the rest of the threads were initialised but did nothing before is_crawl_complete checked to see if the crawl looked done. (Only function pointers would initialise.)
+
+>>>>
+    // Allows threads to initialise before checking if crawl is complete
+    struct timespec remaining, request = { 0, 100*1000*1000 };
+    nanosleep(&request, &remaining);
+<<<<
+
+To be extra safe, I also made sure to first initialise both a downloader and parser to reduce the chances of a downloader immediately getting bored. (This part proceeds the rest of the pthread_create lines.)
+
+>>>>
+    pthread_create(&state->download_workers[0], NULL, download_worker_thread, state);
+    pthread_create(&state->parse_workers[0], NULL, parse_worker_thread, state);
+<<<<
+
+(That race condition took me an eternity to figure out on my own. On the bright side, I had ample time to actually understand the code :] ) Apart from that, Claude Code helped to make a working version of code relatively quickly. (It did try to implement a program that had every thread broadcast to one lock, making the point of multiple threads pointless.)
+
+...
+
+I claim that the code is parallel because the output (around initialisation) often has threads getting in each other's way.
+
+>>>>
+[P3] Dequeued page: dadci2kk (queue: 0)
+[P2] Parsing: tzdv73wl
+[P3] Parsing: dadci2kk
+[D1] Fetching: 7lvphyk7
+[D0] Enqueued page: mc0ngx5o (queue: 1)
+[D2] Dequeued link: 68jyu71l (queue: 8)
+[D3] Dequeued link: e6a0nu8p (queue: 9)
+[D3] Fetching: e6a0nu8p
+[P2] Found 2 links
+<<<<
+
+...
+
+...
+
+For my 4 prompts, I chose all combinations of good/bad prompt and good/bad code.
+
+[Bad prompt, good code] (Context: Claude asked, "What do you see in the output?")
+
+P: I see a segmentation fault:
+
+make clean && make libcrawler.so && make crawl && make run-crawl
+rm -f *.o *.so crawl
+gcc -fpic -Wall -Werror -pthread -shared -o libcrawler.so crawler.c
+gcc -fpic -Wall -Werror -pthread -L. -o crawl ../os-crawler-framework/driver.c -lcrawler 
+export LD_LIBRARY_PATH=.:$LD_LIBRARY_PATH && ./crawl ../os-crawler-framework/test1
+Waiting: links=1, pages=0, active_dl=0, active_parse=0
+/bin/sh: line 1:  2722 Segmentation fault: 11  ./crawl ../os-crawler-framework/test1
+make: *** [run-crawl] Error 139
+
+C: This prompt was just sass at Claude. But it did successfully diagnose and solve the problem on its own. So, a lucky break for me.
+
+[Bad prompt, bad code] 
+
+P: The implementation still fails. The code completes after 10% of the links even though the work queue is not empty (10 items left). Can we use cond signal for crawl complete, where each thread will cond signal completion and return when no work is left to do expect during initialisation? (As in, cover for the case where the queue is empty because the threads were just initialised.)
+
+C: I did not know what I was talking about. Due to that lack of understanding and ambiguous intent, Claude ended up doing its own thing, which caused me to follow up with the below.
+
+[Good prompt, bad code]
+
+P: No, that is not right. Can we go back to v42, and only add (1) total_enqueued and (2) total_dequeued to add a total_enqueued==total_dequeued check for crawl complete. (I assume total_enqueued==total_dequeued only occurs if the crawl ends. Please correct me if I am wrong, it's important.) Also, we really shouldn't be broadcasting states. We should have locks implemented precisely with additional non-state dependent checks (ex. total_enqueued==total_dequeued) to check if the crawl should be done, to resolve deadlock, etc.
+
+C: This was a rare instance of me providing Claude with direct plan and instructions. I made a point about using total_enqueued==total_dequeued somewhere in the is_crawl_complete check. Claude agreed but silently did its own thing.
+
+
+[Good prompt, good code] (Context: Proceeded by an extensive pseudo-code discussion.)
+
+P: We can try. HTML links will be in the form: <a href="filename">filename</a>
+
+C: Claude wrote several hundred lines of code including several unspecified features, ex. a hash map. Essentially, Claude made a whole program, even though I only specified here the barebones "core data structures". Having a preliminary pseudocode discussion likely contributed to this.
+
+
+This concludes my report/summary.
+
+-Ben
+
+
